@@ -1,0 +1,27 @@
+# OmniDeck — 群晖 Synology DSM Container Manager 一键部署
+# 用法：把整个 server/ 目录上传到 NAS（例如 /volume1/docker/omnideck），
+#       在 Container Manager 中"新增 → 上传 docker-compose.yml"即可。
+services:
+  omnideck:
+    build: .
+    container_name: omnideck
+    restart: unless-stopped
+    ports:
+      # 格式: "宿主机端口:容器端口"。容器内固定 8080；
+      # 若宿主机 8080 被占用，改冒号左边即可（例如 8081），并同步更新固件的 OMNIDECK_SERVER_URL
+      - "${OMNIDECK_PORT:-8081}:8080"
+    volumes:
+      - ./data:/app/data       # SQLite 数据库与 JSON 配置持久化
+    environment:
+      - NODE_ENV=production
+      - PORT=8080
+      - TZ=Asia/Shanghai
+      # 可在 .env 中设 OMNIDECK_PORT=xxxx 自定义外部端口
+      # AI 播报（可选）：不填则使用本地模板文案，不调用云端
+      # - OPENAI_API_KEY=sk-xxx
+      # - OPENAI_BASE_URL=https://api.openai.com
+      # - OPENAI_MODEL=gpt-4o-mini
+      # - TTS_API_KEY=sk-xxx
+      # - TTS_BASE_URL=https://api.openai.com
+      # - TTS_MODEL=tts-1
+      # - TTS_VOICE=alloy

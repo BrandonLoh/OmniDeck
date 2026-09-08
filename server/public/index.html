@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OmniDeck 控制台</title>
+<link rel="icon" type="image/x-icon" href="/favicon.ico?v=2">
+<link rel="apple-touch-icon" href="/omnideck_icon.png?v=2">
+<!-- Tailwind CSS（CDN 版，NAS 内网可用；如需离线可自行下载替换） -->
+<script src="https://cdn.tailwindcss.com"></script>
+<!-- Vue 3 -->
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+  /* 日程卡片在 7 列网格内的通用样式 */
+  .grid-head { position: sticky; top: 0; z-index: 10; }
+  .fade-enter-active, .fade-leave-active { transition: all .3s ease; }
+  .fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(8px); }
+</style>
+</head>
+<body class="bg-gray-100 min-h-screen text-gray-800">
+<div id="app" class="max-w-7xl mx-auto p-4 md:p-6">
+
+  <!-- ===== 顶部导航 ===== -->
+  <header class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold tracking-wide">🖥️ OmniDeck 控制台</h1>
+    <div class="flex items-center gap-2 text-sm">
+      <span>{{ device.online ? '🟢 在线' : '🔴 离线' }}</span>
+      <span v-if="device.lastSeen" class="text-gray-400 hidden sm:inline">心跳 {{ shortTime(device.lastSeen) }}</span>
+    </div>
+  </header>
+
+  <!-- ===== Tab 切换 ===== -->
+  <nav class="flex gap-1 mb-6 overflow-x-auto">
+    <button v-for="t in tabs" :key="t.id" @click="tab = t.id"
+      class="px-4 py-2 rounded-t-lg text-sm font-medium whitespace-nowrap transition"
+      :class="tab === t.id ? 'bg-white shadow text-blue-600' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'">
+      {{ t.label }}
+    </button>
+  </nav>
+
+  <!-- ================= 模块 1：周日程编辑器 ================= -->
+  <section v-show="tab === 'schedule'" class="bg-white rounded-xl shadow p-4">
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="font-semibold text-lg">📅 周日程编辑器</h2>
+      <button @click="openScheduleModal(null, null)" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">+ 新建日程</button>
+    </div>
+    <!-- 7 列时间轴卡片视图 -->
+    <div class="grid grid-cols-7 gap-2 min-w-[720px]">
+      <div v-for="d in 7" :key="d" class="min-h-[240px]">
+        <div class="text-center text-sm font-semibold py-2 rounded-t-lg"
+             :class="d === todayDow ? 'bg-blue-600 text-white' : 'bg-gray-200'">
+          {{ dowName(d) }}
+        </div>
+        <div class="border border-t-0 rounded-b-lg p-1 space-y-1 bg-gray-50 min-h-[200px]"
+             @click.self="openScheduleModal(d, null)">
+          <div v-for="ev in schedulesByDay(d)" :key="ev.id"
+               @click="openScheduleModal(d, ev)"
+               class="cursor-pointer rounded-lg px-2 py-1.5 text-xs border-l-4 border-blue-500 bg-blue-50 hover:bg-blue-100">
+            <div class="font-semibold text-gray-700">{{ ev.start_time }} - {{ ev.end_time }}</div>
+            <div class="text-gray-800 truncate">{{ ev.title }}</div>
+            <div v-if="ev.location" class="text-gray-400 truncate">📍 {{ ev.location }}</div>
+          </div>
+          <div v-if="!schedulesByDay(d).length" class="text-center text-xs text-gray-300 pt-6"
+               @click="openScheduleModal(d, null)">点击添加</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 模块 2：倒计时看板 ================= -->
+  <section v-show="tab === 'countdown'" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div v-for="c in countdowns" :key="c.id" class="bg-white rounded-xl shadow p-4 relative">
+      <!-- 置顶开关：同一时间仅一个置顶 -->
+      <label class="absolute top-3 right-3 flex items-center gap-1 text-xs cursor-pointer">
+        <input type="checkbox" :checked="c.is_top" @change="toggleTop(c)" class="accent-blue-600">
+        置顶屏幕
+      </label>
+      <div class="text-lg font-semibold mt-1">{{ c.title }}</div>
+      <div class="text-gray-400 text-sm">目标 {{ c.target_date }}</div>
+      <div class="mt-3 text-3xl font-bold" :class="c.is_top ? 'text-blue-600' : 'text-gray-700'">
+        {{ daysTo(c.target_date) }}
+      </div>
+      <button @click="delCountdown(c)" class="mt-3 text-xs text-red-400 hover:text-red-600">删除</button>
+    </div>
+    <!-- 新建倒计时卡片 -->
+    <div class="bg-white rounded-xl shadow p-4 flex flex-col justify-center items-center gap-2 cursor-pointer hover:bg-gray-50"
+         @click="showCdModal = true">
+      <div class="text-4xl text-gray-300">＋</div>
+      <div class="text-sm text-gray-400">添加倒计时</div>
+    </div>
+  </section>
+
+  <!-- ================= 模块 3：闹钟与播报设置 ================= -->
+  <section v-show="tab === 'alarm'" class="bg-white rounded-xl shadow p-6 max-w-xl">
+    <h2 class="font-semibold text-lg mb-4">⏰ 闹钟与播报设置</h2>
+
+    <div v-for="a in alarms" :key="a.id" class="flex items-center gap-3 py-3 border-b">
+      <input type="time" v-model="a.time" @change="saveAlarm(a)" class="border rounded-lg px-2 py-1 text-lg">
+      <input v-model="a.days" @change="saveAlarm(a)" class="border rounded-lg px-2 py-1 flex-1 text-sm" placeholder="[1,2,3,4,5]">
+      <label class="flex items-center gap-1 text-sm"><input type="checkbox" v-model="a.enabled" @change="saveAlarm(a)">启用</label>
+      <button @click="delAlarm(a)" class="text-red-400 hover:text-red-600 text-sm">删除</button>
+    </div>
+
+    <!-- 快捷周期预设 -->
+    <div class="mt-4 flex flex-wrap gap-2">
+      <button v-for="p in presets" :key="p.label" @click="addAlarm(p.mask)"
+        class="px-3 py-1.5 rounded-full bg-gray-100 text-sm hover:bg-blue-100">+ {{ p.label }}</button>
+    </div>
+
+    <div class="mt-6 p-3 rounded-lg bg-blue-50 text-sm">
+      🤖 闹钟响铃后，OmniDeck 将自动向服务端上报温湿度，由 AI 生成"日期 + 温湿度 + 今日日程"语音流推送播放。
+    </div>
+  </section>
+
+  <!-- ================= 模块 3.5：待办事项 ================= -->
+  <section v-show="tab === 'todo'" class="bg-white rounded-xl shadow p-6 max-w-xl">
+    <h2 class="font-semibold text-lg mb-4">✅ 待办事项（显示在设备右栏）</h2>
+    <div class="flex gap-2 mb-4">
+      <input v-model="todoInput" @keyup.enter="addTodo" placeholder="输入待办内容…"
+             class="flex-1 border rounded-lg px-3 py-2">
+      <button @click="addTodo" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">添加</button>
+    </div>
+    <div class="space-y-2">
+      <div v-for="t in todos" :key="t.id" class="flex items-center gap-3 py-2 border-b">
+        <input type="checkbox" :checked="t.done" @change="toggleTodo(t)" class="accent-blue-600 w-5 h-5">
+        <span class="flex-1" :class="t.done ? 'line-through text-gray-400' : ''">{{ t.text }}</span>
+        <button @click="delTodo(t)" class="text-red-400 hover:text-red-600 text-sm">删除</button>
+      </div>
+      <div v-if="!todos.length" class="text-gray-400 text-sm">暂无待办，添加一条试试</div>
+    </div>
+  </section>
+
+  <!-- ================= 模块 4：设备状态与屏幕镜像 ================= -->
+  <section v-show="tab === 'device'" class="grid gap-4 lg:grid-cols-2">
+    <!-- 左列：状态 + 控制 -->
+    <div class="space-y-4">
+      <div class="bg-white rounded-xl shadow p-4">
+        <h3 class="font-semibold mb-2">连接状态</h3>
+        <p>{{ device.online ? '🟢 ESP32-S3 在线' : '🔴 ESP32-S3 离线' }}</p>
+        <p class="text-gray-400 text-sm">上次心跳：{{ device.lastSeen || '—' }}</p>
+      </div>
+      <div class="grid grid-cols-3 gap-4">
+        <div class="bg-white rounded-xl shadow p-4 text-center">
+          <div class="text-gray-400 text-sm">🌡️ 室内温度</div>
+          <div class="text-3xl font-bold mt-1">{{ device.temp != null ? device.temp.toFixed(1) + '°C' : '—' }}</div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4 text-center">
+          <div class="text-gray-400 text-sm">💧 湿度</div>
+          <div class="text-3xl font-bold mt-1">{{ device.humi != null ? device.humi.toFixed(0) + '%RH' : '—' }}</div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4 text-center">
+          <div class="text-gray-400 text-sm">🔋 电池</div>
+          <div class="text-3xl font-bold mt-1">{{ device.battery != null ? device.battery + '%' : '—' }}</div>
+        </div>
+      </div>
+      <div class="flex gap-3">
+        <button @click="syncNow" class="flex-1 bg-blue-600 text-white py-3 rounded-xl hover:bg-blue-700">⟳ 立即同步数据</button>
+        <button @click="testVoice" class="flex-1 bg-emerald-600 text-white py-3 rounded-xl hover:bg-emerald-700">🔊 语音测试 / 播报今日日程</button>
+      </div>
+    </div>
+
+    <!-- 右列：400×300 虚拟屏幕镜像（横屏） -->
+    <div class="bg-white rounded-xl shadow p-4 flex flex-col items-center">
+      <h3 class="font-semibold mb-3 self-start">🖥️ 虚拟屏幕镜像 (400×300 横屏)</h3>
+      <div class="overflow-hidden" style="width:400px; height:300px; background:#c3c9c1; font-size:12px; border:2px solid #111; border-radius:4px; color:#111;">
+        <template v-if="mirror">
+          <!-- 顶栏 -->
+          <div class="flex justify-between items-center px-2 border-b-2 border-black" style="height:30px; font-weight:600;">
+            <span>{{ mirror.status_bar }}</span>
+            <span>📶 🔋{{ device.battery != null ? device.battery + '%' : '--%' }}</span>
+          </div>
+          <!-- 主体双栏 -->
+          <div class="flex" style="height:264px;">
+            <!-- 左栏: 日程 -->
+            <div class="px-1 pt-1 border-r-2 border-black" style="width:200px;">
+              <div class="font-bold">📅 日程安排</div>
+              <div class="mt-1 text-xs">▶ 当前 <span class="inline-block bg-black text-white px-1 rounded-sm">{{ mirror.schedule.title }}</span></div>
+              <div class="text-xs">{{ mirror.schedule.title }}</div>
+              <div class="mt-3 text-xs">🕐 下一</div>
+              <div class="text-xs border border-black inline-block px-1 rounded-sm">{{ mirror.schedule.next }}</div>
+            </div>
+            <!-- 右栏: 倒计时 + 待办 -->
+            <div class="px-1 pt-1 flex-1">
+              <div class="font-bold">🔔 倒计时</div>
+              <div class="text-xs">{{ mirror.countdown.title }}</div>
+              <div class="font-bold">{{ mirror.countdown.days }}</div>
+              <div class="border-t border-black my-1"></div>
+              <div class="font-bold">✅ 待办事项</div>
+              <div class="text-xs whitespace-pre-line">{{ (mirror.todos || '').split('|').join('\n') }}</div>
+            </div>
+          </div>
+        </template>
+        <div v-else class="flex items-center justify-center h-full text-gray-500">等待设备上报镜像…</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 右下角同步提示 Toast ===== -->
+  <transition name="fade">
+    <div v-if="toast" class="fixed bottom-6 right-6 bg-gray-800 text-white px-5 py-3 rounded-xl shadow-lg text-sm">
+      ✅ {{ toast }}
+    </div>
+  </transition>
+
+  <!-- ===== 日程 Modal ===== -->
+  <div v-if="showSchModal" class="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" @click.self="showSchModal=false">
+    <div class="bg-white rounded-xl p-6 w-full max-w-sm space-y-3">
+      <h3 class="font-semibold text-lg">{{ schForm.id ? '编辑日程' : '新建日程' }}</h3>
+      <div class="grid grid-cols-2 gap-3">
+        <label class="text-sm">星期
+          <select v-model.number="schForm.day_of_week" class="w-full border rounded-lg px-2 py-1.5 mt-1">
+            <option v-for="d in 7" :key="d" :value="d">{{ dowName(d) }}</option>
+          </select>
+        </label>
+        <label class="text-sm">地点（可选）
+          <input v-model="schForm.location" class="w-full border rounded-lg px-2 py-1.5 mt-1">
+        </label>
+        <label class="text-sm">开始
+          <input type="time" v-model="schForm.start_time"
+            :class="['w-full border rounded-lg px-2 py-1.5 mt-1', schErrors.conflict ? 'border-red-500 ring-2 ring-red-300' : '']">
+        </label>
+        <label class="text-sm">结束
+          <input type="time" v-model="schForm.end_time"
+            :class="['w-full border rounded-lg px-2 py-1.5 mt-1', schErrors.conflict ? 'border-red-500 ring-2 ring-red-300' : '']">
+        </label>
+      </div>
+      <label class="text-sm block">日程名称
+        <input v-model="schForm.title" class="w-full border rounded-lg px-2 py-1.5 mt-1">
+      </label>
+      <p v-if="schErrors.conflict" class="text-red-500 text-xs">⚠️ 与同一天已有日程时间重叠</p>
+      <div class="flex gap-3 pt-2">
+        <button v-if="schForm.id" @click="delSchedule" class="px-4 py-2 rounded-lg bg-red-50 text-red-600 text-sm">删除</button>
+        <button @click="saveSchedule" :disabled="schErrors.conflict"
+          class="flex-1 bg-blue-600 text-white py-2 rounded-lg disabled:bg-gray-300">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 倒计时 Modal ===== -->
+  <div v-if="showCdModal" class="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" @click.self="showCdModal=false">
+    <div class="bg-white rounded-xl p-6 w-full max-w-sm space-y-3">
+      <h3 class="font-semibold text-lg">添加倒计时</h3>
+      <input v-model="cdForm.title" placeholder="事件名称，如：高考" class="w-full border rounded-lg px-3 py-2">
+      <input type="date" v-model="cdForm.target_date" class="w-full border rounded-lg px-3 py-2">
+      <label class="text-sm flex items-center gap-2"><input type="checkbox" v-model="cdForm.is_top"> 置顶到 RLCD 屏幕</label>
+      <button @click="addCountdown" class="w-full bg-blue-600 text-white py-2 rounded-lg">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const { createApp, ref, reactive, computed, onMounted, onUnmounted } = Vue;
+
+createApp({
+  setup() {
+    /* ---------------- 基础状态 ---------------- */
+    const tabs = [
+      { id: 'schedule',  label: '📅 周日程' },
+      { id: 'countdown', label: '⏳ 倒计时' },
+      { id: 'alarm',     label: '⏰ 闹钟' },
+      { id: 'todo',      label: '✅ 待办' },
+      { id: 'device',    label: '🖥️ 设备' },
+    ];
+    const tab = ref('schedule');
+    const toast = ref('');
+    let toastTimer = null;
+    const showToast = (msg) => { toast.value = msg; clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.value = '', 2500); };
+    const DOW = ['周一','周二','周三','周四','周五','周六','周日'];
+    const dowName = (d) => DOW[d - 1];
+    const todayDow = ((new Date().getDay() + 6) % 7) + 1;
+    const shortTime = (iso) => new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+
+    /* ---------------- 数据 ---------------- */
+    const schedules = ref([]);       // 周日程
+    const countdowns = ref([]);      // 倒计时
+    const alarms = ref([]);          // 闹钟
+    const todos = ref([]);           // 待办
+    const todoInput = ref('');
+    const device = reactive({ online: false, lastSeen: null, temp: null, humi: null });
+    const mirror = ref(null);        // 屏幕镜像快照
+
+    const schedulesByDay = (d) => schedules.value.filter(s => s.day_of_week === d).sort((a, b) => a.start_time.localeCompare(b.start_time));
+
+    // 剩余天数：过去日期显示 "已过去 X 天"
+    const daysTo = (dateStr) => {
+      const diff = Math.round((new Date(dateStr + 'T00:00:00') - new Date(new Date().toDateString())) / 86400000);
+      return diff >= 0 ? `还剩 ${diff} 天` : `已过去 ${-diff} 天`;
+    };
+
+    /* ---------------- REST 封装 ---------------- */
+    const api = async (url, opts) => {
+      const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+      return res.status === 204 ? null : res.json();
+    };
+
+    async function loadAll() {
+      [schedules.value, countdowns.value, alarms.value, todos.value] = await Promise.all([
+        api('/api/schedule'), api('/api/countdowns'), api('/api/alarms'), api('/api/todos'),
+      ]);
+    }
+
+    /* ---------------- 待办事项 ---------------- */
+    async function addTodo() {
+      const text = todoInput.value.trim();
+      if (!text) return;
+      await api('/api/todos', { method: 'POST', body: JSON.stringify({ text }) });
+      todoInput.value = '';
+      todos.value = await api('/api/todos');
+      showToast('已同步至 OmniDeck 桌面');
+    }
+    async function toggleTodo(t) {
+      await api(`/api/todos/${t.id}`, { method: 'PUT', body: JSON.stringify({ done: !t.done }) });
+      todos.value = await api('/api/todos');
+      showToast('已同步至 OmniDeck 桌面');
+    }
+    async function delTodo(t) {
+      await api(`/api/todos/${t.id}`, { method: 'DELETE' });
+      todos.value = await api('/api/todos');
+      showToast('已同步至 OmniDeck 桌面');
+    }
+
+    /* ---------------- 周日程编辑 ---------------- */
+    const showSchModal = ref(false);
+    const schForm = reactive({ id: null, day_of_week: 1, start_time: '09:00', end_time: '10:00', title: '', location: '' });
+
+    // 冲突检测：同一天内时间段重叠时红框提示并禁止保存
+    const schErrors = computed(() => {
+      const conflict = schedules.value.some(s =>
+        s.id !== schForm.id && s.day_of_week === schForm.day_of_week &&
+        schForm.start_time < s.end_time && s.start_time < schForm.end_time);
+      return { conflict };
+    });
+
+    function openScheduleModal(day, ev) {
+      Object.assign(schForm, ev || { id: null, day_of_week: day || 1, start_time: '09:00', end_time: '10:00', title: '', location: '' });
+      if (ev) schForm.day_of_week = ev.day_of_week;
+      showSchModal.value = true;
+    }
+
+    async function saveSchedule() {
+      const body = JSON.stringify({ ...schForm });
+      if (schForm.id) await api(`/api/schedule/${schForm.id}`, { method: 'PUT', body });
+      else await api('/api/schedule', { method: 'POST', body });
+      showSchModal.value = false;
+      await loadAll();
+      showToast('已同步至 OmniDeck 桌面');
+    }
+
+    async function delSchedule() {
+      await api(`/api/schedule/${schForm.id}`, { method: 'DELETE' });
+      showSchModal.value = false;
+      await loadAll();
+      showToast('已同步至 OmniDeck 桌面');
+    }
+
+    /* ---------------- 倒计时 ---------------- */
+    const showCdModal = ref(false);
+    const cdForm = reactive({ title: '', target_date: '', is_top: false });
+
+    async function addCountdown() {
+      if (!cdForm.title || !cdForm.target_date) return;
+      await api('/api/countdowns', { method: 'POST', body: JSON.stringify(cdForm) });
+      showCdModal.value = false;
+      cdForm.title = ''; cdForm.target_date = ''; cdForm.is_top = false;
+      await loadAll();
+      showToast('已同步至 OmniDeck 桌面');
+    }
+
+    // 置顶开关：开启新的置顶时后端自动取消其它置顶
+    async function toggleTop(c) {
+      await api(`/api/countdowns/${c.id}`, { method: 'PUT', body: JSON.stringify({ is_top: !c.is_top }) });
+      await loadAll();
+      showToast(c.is_top ? '已取消置顶' : '已置顶到 RLCD 屏幕');
+    }
+
+    async function delCountdown(c) {
+      await api(`/api/countdowns/${c.id}`, { method: 'DELETE' });
+      await loadAll();
+      showToast('已同步至 OmniDeck 桌面');
+    }
+
+    /* ---------------- 闹钟 ---------------- */
+    // 预设周期：工作日 / 周末 / 每天
+    const presets = [
+      { label: '工作日 07:30', mask: [1, 2, 3, 4, 5] },
+      { label: '周末 08:30',   mask: [6, 7] },
+      { label: '每天 07:00',   mask: [1, 2, 3, 4, 5, 6, 7] },
+    ];
+    // alarms 行渲染时把 days_mask 字符串转为可编辑文本
+    alarms.value = [];
+    function normalizeAlarm(a) { return reactive({ ...a, days: a.days_mask, enabled: !!a.enabled }); }
+
+    async function addAlarm(mask) {
+      await api('/api/alarms', { method: 'POST', body: JSON.stringify({ time: '07:30', days_mask: mask, enabled: true }) });
+      await loadAll();
+      showToast('已同步至 OmniDeck 桌面');
+    }
+    async function saveAlarm(a) {
+      await api('/api/alarms', { method: 'POST', body: JSON.stringify({ id: a.id, time: a.time, days_mask: a.days, enabled: a.enabled }) });
+      await loadAll();
+      showToast('已同步至 OmniDeck 桌面');
+    }
+    async function delAlarm(a) {
+      await api(`/api/alarms/${a.id}`, { method: 'DELETE' });
+      await loadAll();
+      showToast('已同步至 OmniDeck 桌面');
+    }
+
+    /* ---------------- 设备面板 ---------------- */
+    async function syncNow() {
+      const r = await api('/api/sync', { method: 'POST' });
+      showToast(r.sent ? `已推送至 ${r.sent} 台设备` : '设备离线，数据已保存');
+    }
+    async function testVoice() {
+      const r = await api('/api/broadcast', { method: 'POST' });
+      showToast(r.ok ? '播报指令已发送' : `失败：${r.error}`);
+    }
+
+    /* ---------------- WebSocket 实时更新 ---------------- */
+    let ws, wsTimer;
+    function connectWs() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${proto}://${location.host}/ws?role=web`);
+      ws.onopen = () => { device.online = device.online || true; };
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.event === 'DEVICE_STATUS') Object.assign(device, msg.data);
+        else if (msg.event === 'MIRROR_UPDATE') mirror.value = msg.data.mirror;
+        else if (msg.type === 'FULL_SYNC' || msg.type === 'SYNC_UPDATE') {
+          schedules.value = msg.schedules || [];
+          if (msg.alarms) alarms.value = msg.alarms.map(normalizeAlarm);
+          if (msg.todos) todos.value = msg.todos;
+        }
+      };
+      ws.onclose = () => { wsTimer = setTimeout(connectWs, 3000); }; // 断线自动重连
+    }
+    // 注意：服务端 SYNC_UPDATE 只带置顶倒计时，倒计时列表仍以 REST 拉取为准
+    // 这里在收到 SYNC_UPDATE 后静默刷新一次列表
+    // （见 ws.onmessage 内 SYNC_UPDATE 分支）
+
+    onMounted(async () => {
+      await loadAll();
+      connectWs();
+      // 初始设备状态 + 完整倒计时列表（SYNC_UPDATE 只带置顶项）
+      api('/api/status').then(r => Object.assign(device, r.device));
+      api('/api/countdowns').then(r => countdowns.value = r);
+    });
+    onUnmounted(() => { clearTimeout(wsTimer); ws && ws.close(); });
+
+    return {
+      tabs, tab, toast, dowName, todayDow, shortTime,
+      schedules, countdowns, alarms, todos, todoInput, device, mirror,
+      schedulesByDay, daysTo,
+      showSchModal, schForm, schErrors, openScheduleModal, saveSchedule, delSchedule,
+      showCdModal, cdForm, addCountdown, toggleTop, delCountdown,
+      presets, addAlarm, saveAlarm, delAlarm,
+      addTodo, toggleTodo, delTodo,
+      syncNow, testVoice,
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "name": "omnideck-server",
+  "version": "1.0.0",
+  "description": "OmniDeck 智能桌面控制台 - NAS 服务端 (REST API + WebSocket + Web 管理端)",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  }
+}
