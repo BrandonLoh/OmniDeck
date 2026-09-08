@@ -1,0 +1,10 @@
+# ESP-IDF Partition Table — OmniDeck 16MB
+# 在 v2/16m.csv 基础上新增 1MB "storage" 分区（LittleFS: /littlefs/schedule_cache.json 等）
+# Name,   Type, SubType, Offset,  Size, Flags
+nvs,      data, nvs,     0x9000,    0x4000,
+otadata,  data, ota,     0xd000,    0x2000,
+phy_init, data, phy,     0xf000,    0x1000,
+ota_0,    app,  ota_0,   0x20000,   0x3f0000,
+ota_1,    app,  ota_1,   ,          0x3f0000,
+storage,  data, spiffs,  0x800000,  1M,
+assets,   data, spiffs,  0x900000,  7M

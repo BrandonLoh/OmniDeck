@@ -1,0 +1,23 @@
+{
+  "manufacturer": "OmniDeck",
+  "name": "OmniDeck 智能桌面控制台",
+  "type": "omnideck",
+  "target": "esp32s3",
+  "builds": [
+    {
+      "name": "OmniDeck",
+      "sdkconfig_append": [
+        "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions/v2/omnideck_16m.csv\"",
+        "CONFIG_ESP32S3_DATA_CACHE_64KB=y",
+        "CONFIG_SPIRAM_SPEED_80MHZ=y",
+        "CONFIG_OMNIDECK_STANDALONE=y",
+        "CONFIG_WAKE_WORD_DISABLED=y",
+        "CONFIG_PM_ENABLE=y",
+        "CONFIG_FREERTOS_USE_TICKLESS_IDLE=y",
+        "CONFIG_LV_DEF_REFR_PERIOD=200",
+        "CONFIG_OMNIDECK_DEEP_SLEEP=y",
+        "CONFIG_OMNIDECK_WAKE_INTERVAL_SEC=900"
+      ]
+    }
+  ]
+}
